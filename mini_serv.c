@@ -186,7 +186,7 @@ int		main(int argc, char **argv)
 		close(sockfd);
 		exit(1);
 	}
-	if (listen(sockfd, 0) != 0)
+	if (listen(sockfd, SOMAXCONN) != 0)
 	{
 		write(2, "Fatal error\n", 12);
 		close(sockfd);
