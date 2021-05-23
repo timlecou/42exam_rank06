@@ -119,7 +119,7 @@ int		extract_message(char **buf, char **msg)
 	{
 		if ((*buf)[i] == '\n')
 		{
-			if (!(newbuf = malloc(sizeof(char) * (strlen(*buf + i + 1) + 1))))
+			if (!(newbuf = calloc(1, sizeof(*newbuf) * (strlen(*buf + i + 1) + 1))))
 				return (-1);
 			strcpy(newbuf, *buf + i + 1);
 			*msg = *buf;
@@ -150,22 +150,27 @@ int		main(int argc, char **argv)
 {
 	int		port, ret, connfd, id;
 	ssize_t	size = 0;
-	struct	timeval	timeout;
-	struct	sockaddr_in	servaddr, cli;
+	//struct	timeval	timeout;
+	struct	sockaddr_in	servaddr;//, cli;
 	t_client	*clients = NULL;
 	t_client	*tmp;
 	char		str[500000];
 	char		*buff = NULL;
 	char		*msg = NULL;
 	fd_set		set_read;
-	socklen_t	len;
+	//socklen_t	len;
 
 	if (argc != 2)
 	{
 		write(2, "Wrong number of arguments\n", 26);
 		exit(1);
 	}
-	sockfd = socket(AF_INET, SOCK_STREAM, 0);
+	if ((sockfd = socket(AF_INET, SOCK_STREAM, 0)) < 0)
+	{
+		write(2, "Fatal error\n", 12);
+		close(sockfd);
+		exit(1);
+	}
 	port = atoi(argv[1]);
 	bzero(&servaddr, sizeof(servaddr));
 
@@ -186,26 +191,27 @@ int		main(int argc, char **argv)
 		close(sockfd);
 		exit(1);
 	}
-	if (listen(sockfd, SOMAXCONN) != 0)
+	if (listen(sockfd, 10) != 0)
 	{
 		write(2, "Fatal error\n", 12);
 		close(sockfd);
 		exit(1);
 	}
 
-	len = sizeof(cli);
-	timeout.tv_sec = 5;
-	timeout.tv_usec = 0;
+	g_id = 0;
+	//len = sizeof(cli);
+	//timeout.tv_sec = 5;
+	//timeout.tv_usec = 0;
 
 	while (1)
 	{
 		init_fdset(&set_read, clients);
-		ret = select(max_fd + 1, &set_read, NULL, NULL, &timeout);
+		ret = select(max_fd + 1, &set_read, NULL, NULL, NULL);
 		if (ret > 0)
 		{
 			if (FD_ISSET(sockfd, &set_read))
 			{
-				connfd = accept(sockfd, (struct sockaddr*)&cli, &len);
+				connfd = accept(sockfd, NULL, NULL);
 				if (connfd >= 0)
 				{
 					id = add_client(&clients, connfd);
