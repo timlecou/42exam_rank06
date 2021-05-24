@@ -4,6 +4,7 @@
 #include <stdlib.h>
 #include <sys/socket.h>
 #include <netinet/in.h>
+#include <fcntl.h>
 
 typedef	struct			s_client
 {
@@ -192,10 +193,11 @@ int		main(int argc, char **argv)
 	struct	sockaddr_in	servaddr;
 	t_client	*tmp;
 	t_client	*clients = NULL;
-	char		str[5000];
+	char		str[256];
 	char		buff[4096];
 	char		*message = NULL;
 	char		*msg = NULL;
+	char		*tmpchar = NULL;
 	fd_set		set_read;
 	fd_set		set_write;
 	fd_set		fds;
@@ -240,6 +242,7 @@ int		main(int argc, char **argv)
 			if (connfd >= 0)
 			{
 				id = add_client(&clients, connfd);
+				fcntl(connfd, F_SETFL, O_NONBLOCK);
 				FD_SET(connfd, &fds);
 				if (max_fd < connfd)
 					max_fd = connfd;
@@ -258,7 +261,7 @@ int		main(int argc, char **argv)
 			{
 				i = 0;
 				//------------------------
-				while ((size = recv(connfd, buff, 4095, MSG_DONTWAIT)) > 0)
+				while ((size = recv(connfd, buff, 4095, 0)) > 0)
 				{
 					buff[size] = '\0';
 					i += size;
@@ -282,9 +285,13 @@ int		main(int argc, char **argv)
 					msg = NULL;
 					while (extract_message(&message, &msg))
 					{
-						sprintf(str, "client %d: %s", id, msg);
-						send_all(clients, str, connfd, &set_write);
+						if (!(tmpchar = malloc(sizeof(char) * (14 + strlen(msg)))))
+							fatal_error();
+						sprintf(tmpchar, "client %d: %s", id, msg);
+						send_all(clients, tmpchar, connfd, &set_write);
 						free(msg);
+						free(tmpchar);
+						tmpchar = NULL;
 						msg = NULL;
 					}
 				}
