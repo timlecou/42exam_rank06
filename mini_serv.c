@@ -57,6 +57,25 @@ int		add_client(t_client **list, int fd)
 	return (new->id);
 }
 
+int		ft_strlen(char *str)
+{
+	if (!str)
+		return (0);
+	int		i = 0;
+
+	while (str[i] != '\0')
+		i++;
+	return (i);
+}
+
+void	fatal_error(void)
+{
+	write(2, "Fatal error\n", 12);
+	if (sockfd != -1)
+		close(sockfd);
+	exit(1);
+}
+
 int		remove_client(t_client **list, int fd)
 {
 	t_client	*prev = NULL;
@@ -95,43 +114,6 @@ int		remove_client(t_client **list, int fd)
 	return (id);
 }
 
-void	send_all(t_client *list, char *str, int fd, fd_set *set)
-{
-	size_t	len = strlen(str);
-
-	while (list != NULL)
-	{
-		if (FD_ISSET(list->fd, set) && list->fd != fd)
-			send(list->fd, str, len, 0);
-		list = list->next;
-	}
-	write(1, str, len);
-}
-
-int		extract_message(char **buf, char **msg)
-{
-	char	*newbuf;
-	int		i = 0;
-
-	if (*buf == 0)
-		return (0);
-	while ((*buf)[i])
-	{
-		if ((*buf)[i] == '\n')
-		{
-			if (!(newbuf = calloc(1, sizeof(*newbuf) * (strlen(*buf + i + 1) + 1))))
-				return (-1);
-			strcpy(newbuf, *buf + i + 1);
-			*msg = *buf;
-			(*msg)[i + 1] = 0;
-			*buf = newbuf;
-			return (1);
-		}
-		i++;
-	}
-	return (0);
-}
-
 char *str_join(char *buf, char *add)
 {
 	char	*newbuf;
@@ -152,22 +134,67 @@ char *str_join(char *buf, char *add)
 	return (newbuf);
 }
 
-void	fatal_error(void)
+void	send_all(t_client *list, char *str, int fd, fd_set *set)
 {
-	write(2, "Fatal error\n", 12);
-	close(sockfd);
-	exit(1);
+	size_t	len = strlen(str);
+
+	while (list != NULL)
+	{
+		if (FD_ISSET(list->fd, set) && list->fd != fd)
+			send(list->fd, str, len, 0);
+		list = list->next;
+	}
+	write(1, str, len);
+}
+
+void	init_fdset(fd_set *set, t_client *clients)
+{
+	FD_ZERO(set);
+	max_fd = sockfd;
+	while (clients != NULL)
+	{
+		FD_SET(clients->fd, set);
+		if (max_fd < clients->fd)
+			max_fd = clients->fd;
+		clients = clients->next;
+	}
+	FD_SET(sockfd, set);
+}
+
+int		extract_message(char **buf, char **msg)
+{
+	char	*newbuf;
+	int		i = 0;
+
+	if (*buf == 0)
+		return (0);
+	while ((*buf)[i])
+	{
+		if ((*buf)[i] == '\n' || (*buf)[i + 1] == '\0')
+		{
+			if (!(newbuf = calloc(1, sizeof(*newbuf) * (strlen(*buf + i + 1) + 1))))
+				return (-1);
+			strcpy(newbuf, *buf + i + 1);
+			*msg = *buf;
+			(*msg)[i + 1] = 0;
+			*buf = newbuf;
+			return (1);
+		}
+		i++;
+	}
+	return (0);
 }
 
 int		main(int argc, char **argv)
 {
-	int		port, connfd, id;
+	int		port, connfd, id, i;
 	ssize_t	size = 0;
 	struct	sockaddr_in	servaddr;
 	t_client	*tmp;
 	t_client	*clients = NULL;
 	char		str[5000];
-	char		*buff = NULL;
+	char		buff[4096];
+	char		*message = NULL;
 	char		*msg = NULL;
 	fd_set		set_read;
 	fd_set		set_write;
@@ -221,23 +248,26 @@ int		main(int argc, char **argv)
 			}
 		}
 
-
-		//read messages
 		tmp = clients;
 		while (tmp != NULL)
 		{
 			id = tmp->id;
 			connfd = tmp->fd;
+			tmp = tmp->next;
 			if (FD_ISSET(connfd, &set_read))
 			{
-				if (!(buff = malloc(4096)))
+				i = 0;
+				//------------------------
+				while ((size = recv(connfd, buff, 4095, MSG_DONTWAIT)) > 0)
+				{
+					buff[size] = '\0';
+					i += size;
+					message = str_join(message, buff);
+				}
+				if (size == -1 && i == 0)
 					fatal_error();
-				size = recv(connfd, buff, 4095, 0);
-				if (size == -1)
-					fatal_error();
-				buff[size] = '\0';
-
-				if (size == 0)
+				//-------------------------
+				if (i == 0)
 				{
 					id = remove_client(&clients, connfd);
 					if (id != -1)
@@ -247,20 +277,20 @@ int		main(int argc, char **argv)
 					}
 					FD_CLR(connfd, &fds);
 				}
-				else if (size > 0)
+				else if (i > 0)
 				{
 					msg = NULL;
-					while (extract_message(&buff, &msg))
+					while (extract_message(&message, &msg))
 					{
 						sprintf(str, "client %d: %s", id, msg);
 						send_all(clients, str, connfd, &set_write);
 						free(msg);
+						msg = NULL;
 					}
 				}
-				free(buff);
-				buff = NULL;
+				free(message);
+				message = NULL;
 			}
-			tmp = tmp->next;
 		}
 	}
 	return (0);
