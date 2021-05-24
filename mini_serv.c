@@ -9,40 +9,12 @@ typedef	struct			s_client
 {
 	int					fd;
 	int					id;
-	char				*message;
 	struct	s_client	*next;
 }						t_client;
-
-typedef	struct			s_list
-{
-	char				*message;
-	struct	s_list		*next;
-}						t_list;
 
 int			g_id = 0;
 int			sockfd = -1;
 int			max_fd = 0;
-t_client	*clients = NULL;
-
-void	list_add(t_list **list, char *data)
-{
-	t_list	elem = malloc(sizeof(t_list));
-
-	if (elem)
-	{
-		elem->message = data;
-		elem->next = NULL;
-		if (*list)
-		{
-			t_list	*tmp = *list;
-			while (tmp->next != NULL)
-				tmp = tmp->next;
-			tmp->next = elem;
-		}
-		else
-			(*list) = elem;
-	}
-}
 
 void	clear_client(t_client *list)
 {
@@ -73,7 +45,6 @@ int		add_client(t_client **list, int fd)
 	new->fd = fd;
 	new->id = g_id++;
 	new->next = NULL;
-	new->message = NULL;
 	if (*list == NULL)
 		*list = new;
 	else
@@ -104,7 +75,6 @@ int		remove_client(t_client **list, int fd)
 		*list = tmp->next;
 		id = tmp->id;
 		close(tmp->fd);
-		free(tmp->message);
 		free(tmp);
 	}
 	else
@@ -119,7 +89,6 @@ int		remove_client(t_client **list, int fd)
 			prev->next = tmp->next;
 			id = tmp->id;
 			close(tmp->fd);
-			free(tmp->message);
 			free(tmp);
 		}
 	}
@@ -183,21 +152,6 @@ char *str_join(char *buf, char *add)
 	return (newbuf);
 }
 
-int		is_nl(char *str)
-{
-	int		i = 0;
-
-	if (!str)
-		return (0);
-	while (str[i] != '\0')
-	{
-		if (str[i] == '\n')
-			return (1);
-		i++;
-	}
-	return (0);
-}
-
 void	fatal_error(void)
 {
 	write(2, "Fatal error\n", 12);
@@ -205,26 +159,15 @@ void	fatal_error(void)
 	exit(1);
 }
 
-int		broadcast(t_client *client, char *str)
-{
-	t_client	*node = clients;
-
-	while (node != NULL)
-	{
-		if (node != client)
-			list_add(&node->messages, str);
-		node = node->next;
-	}
-}
-
 int		main(int argc, char **argv)
 {
-	int		port, ret, connfd, id;
+	int		port, connfd, id;
 	ssize_t	size = 0;
 	struct	sockaddr_in	servaddr;
 	t_client	*tmp;
+	t_client	*clients = NULL;
 	char		str[5000];
-	char		buff[256];
+	char		*buff = NULL;
 	char		*msg = NULL;
 	fd_set		set_read;
 	fd_set		set_write;
@@ -283,15 +226,16 @@ int		main(int argc, char **argv)
 		tmp = clients;
 		while (tmp != NULL)
 		{
-			tmp->id;
-			tmp->fd;
+			id = tmp->id;
+			connfd = tmp->fd;
 			if (FD_ISSET(connfd, &set_read))
 			{
-				size = recv(connfd, buff, 255, 0);
+				if (!(buff = malloc(4096)))
+					fatal_error();
+				size = recv(connfd, buff, 4095, 0);
 				if (size == -1)
 					fatal_error();
 				buff[size] = '\0';
-				tmp->message = str_join(tmp->message, buff);
 
 				if (size == 0)
 				{
@@ -318,8 +262,6 @@ int		main(int argc, char **argv)
 			}
 			tmp = tmp->next;
 		}
-
-		//write messages
 	}
 	return (0);
 }
