@@ -9,12 +9,40 @@ typedef	struct			s_client
 {
 	int					fd;
 	int					id;
+	char				*message;
 	struct	s_client	*next;
 }						t_client;
 
-int		g_id;
-int		sockfd;
-int		max_fd;
+typedef	struct			s_list
+{
+	char				*message;
+	struct	s_list		*next;
+}						t_list;
+
+int			g_id = 0;
+int			sockfd = -1;
+int			max_fd = 0;
+t_client	*clients = NULL;
+
+void	list_add(t_list **list, char *data)
+{
+	t_list	elem = malloc(sizeof(t_list));
+
+	if (elem)
+	{
+		elem->message = data;
+		elem->next = NULL;
+		if (*list)
+		{
+			t_list	*tmp = *list;
+			while (tmp->next != NULL)
+				tmp = tmp->next;
+			tmp->next = elem;
+		}
+		else
+			(*list) = elem;
+	}
+}
 
 void	clear_client(t_client *list)
 {
@@ -45,6 +73,7 @@ int		add_client(t_client **list, int fd)
 	new->fd = fd;
 	new->id = g_id++;
 	new->next = NULL;
+	new->message = NULL;
 	if (*list == NULL)
 		*list = new;
 	else
@@ -75,6 +104,7 @@ int		remove_client(t_client **list, int fd)
 		*list = tmp->next;
 		id = tmp->id;
 		close(tmp->fd);
+		free(tmp->message);
 		free(tmp);
 	}
 	else
@@ -89,19 +119,20 @@ int		remove_client(t_client **list, int fd)
 			prev->next = tmp->next;
 			id = tmp->id;
 			close(tmp->fd);
+			free(tmp->message);
 			free(tmp);
 		}
 	}
 	return (id);
 }
 
-void	send_all(t_client *list, char *str, int fd)
+void	send_all(t_client *list, char *str, int fd, fd_set *set)
 {
 	size_t	len = strlen(str);
 
 	while (list != NULL)
 	{
-		if (list->fd != fd)
+		if (FD_ISSET(list->fd, set) && list->fd != fd)
 			send(list->fd, str, len, 0);
 		list = list->next;
 	}
@@ -132,33 +163,72 @@ int		extract_message(char **buf, char **msg)
 	return (0);
 }
 
-void	init_fdset(fd_set *set, t_client *list)
+char *str_join(char *buf, char *add)
 {
-	FD_ZERO(set);
-	max_fd = sockfd;
-	while (list != NULL)
+	char	*newbuf;
+	int		len;
+
+	if (buf == 0)
+		len = 0;
+	else
+		len = strlen(buf);
+	newbuf = malloc(sizeof(*newbuf) * (len + strlen(add) + 1));
+	if (newbuf == 0)
+		return (0);
+	newbuf[0] = 0;
+	if (buf != 0)
+		strcat(newbuf, buf);
+	free(buf);
+	strcat(newbuf, add);
+	return (newbuf);
+}
+
+int		is_nl(char *str)
+{
+	int		i = 0;
+
+	if (!str)
+		return (0);
+	while (str[i] != '\0')
 	{
-		FD_SET(list->fd, set);
-		if (max_fd < list->fd)
-			max_fd = list->fd;
-		list = list->next;
+		if (str[i] == '\n')
+			return (1);
+		i++;
 	}
-	FD_SET(sockfd, set);
+	return (0);
+}
+
+void	fatal_error(void)
+{
+	write(2, "Fatal error\n", 12);
+	close(sockfd);
+	exit(1);
+}
+
+int		broadcast(t_client *client, char *str)
+{
+	t_client	*node = clients;
+
+	while (node != NULL)
+	{
+		if (node != client)
+			list_add(&node->messages, str);
+		node = node->next;
+	}
 }
 
 int		main(int argc, char **argv)
 {
 	int		port, ret, connfd, id;
 	ssize_t	size = 0;
-	//struct	timeval	timeout;
-	struct	sockaddr_in	servaddr;//, cli;
-	t_client	*clients = NULL;
+	struct	sockaddr_in	servaddr;
 	t_client	*tmp;
-	char		str[500000];
-	char		*buff = NULL;
+	char		str[5000];
+	char		buff[256];
 	char		*msg = NULL;
 	fd_set		set_read;
-	//socklen_t	len;
+	fd_set		set_write;
+	fd_set		fds;
 
 	if (argc != 2)
 	{
@@ -166,104 +236,90 @@ int		main(int argc, char **argv)
 		exit(1);
 	}
 	if ((sockfd = socket(AF_INET, SOCK_STREAM, 0)) < 0)
-	{
-		write(2, "Fatal error\n", 12);
-		close(sockfd);
-		exit(1);
-	}
+		fatal_error();
 	port = atoi(argv[1]);
 	bzero(&servaddr, sizeof(servaddr));
 
 	if (port <= 0)
-	{
-		write(2, "Fatal error\n", 12);
-		close(sockfd);
-		exit(1);
-	}
+		fatal_error();
 
 	servaddr.sin_family = AF_INET;
 	servaddr.sin_port = htons(port);
 	servaddr.sin_addr.s_addr = htonl(2130706433);
 
 	if ((bind(sockfd, (const struct sockaddr*)&servaddr, sizeof(servaddr))) != 0)
-	{
-		write(2, "Fatal error\n", 12);
-		close(sockfd);
-		exit(1);
-	}
+		fatal_error();
 	if (listen(sockfd, 10) != 0)
-	{
-		write(2, "Fatal error\n", 12);
-		close(sockfd);
-		exit(1);
-	}
+		fatal_error();
 
 	g_id = 0;
-	//len = sizeof(cli);
-	//timeout.tv_sec = 5;
-	//timeout.tv_usec = 0;
+	FD_ZERO(&fds);
+	max_fd = sockfd;
+	FD_SET(sockfd, &fds);
 
 	while (1)
 	{
-		init_fdset(&set_read, clients);
-		ret = select(max_fd + 1, &set_read, NULL, NULL, NULL);
-		if (ret > 0)
+		set_read = fds;
+		set_write = fds;
+		if (select(max_fd + 1, &set_read, &set_write, NULL, NULL) == -1)
+			fatal_error();
+
+		if (FD_ISSET(sockfd, &set_read))	//add new connection
 		{
-			if (FD_ISSET(sockfd, &set_read))
+			connfd = accept(sockfd, NULL, NULL);
+			if (connfd >= 0)
 			{
-				connfd = accept(sockfd, NULL, NULL);
-				if (connfd >= 0)
-				{
-					id = add_client(&clients, connfd);
-					if (max_fd < connfd)
-						max_fd = connfd;
-					sprintf(str, "server: client %d just arrived\n", id);
-					send_all(clients, str, connfd);
-				}
-			}
-			else
-			{
-				tmp = clients;
-				while (tmp != NULL)
-				{
-					id = tmp->id;
-					connfd = tmp->fd;
-					tmp = tmp->next;
-					if (FD_ISSET(connfd, &set_read))
-					{
-						if (!(buff = (char*)malloc(500000)))
-						{
-							write(2, "Fatal error\n", 12);
-							close(sockfd);
-							exit(1);
-						}
-						size = recv(connfd, buff, 500000, 0);
-						buff[size] = '\0';
-						if (size == 0)
-						{
-							id = remove_client(&clients, connfd);
-							if (id != -1)
-							{
-								sprintf(str, "server: client %d just left\n", id);
-								send_all(clients, str, connfd);
-							}
-						}
-						else if (size != 0)
-						{
-							msg = NULL;
-							while (extract_message(&buff, &msg))
-							{
-								sprintf(str, "client %d: %s", id, msg);
-								send_all(clients, str, connfd);
-								free(msg);
-							}
-						}
-						free(buff);
-						buff = NULL;
-					}
-				}
+				id = add_client(&clients, connfd);
+				FD_SET(connfd, &fds);
+				if (max_fd < connfd)
+					max_fd = connfd;
+				sprintf(str, "server: client %d just arrived\n", id);
+				send_all(clients, str, connfd, &set_write);
 			}
 		}
+
+
+		//read messages
+		tmp = clients;
+		while (tmp != NULL)
+		{
+			tmp->id;
+			tmp->fd;
+			if (FD_ISSET(connfd, &set_read))
+			{
+				size = recv(connfd, buff, 255, 0);
+				if (size == -1)
+					fatal_error();
+				buff[size] = '\0';
+				tmp->message = str_join(tmp->message, buff);
+
+				if (size == 0)
+				{
+					id = remove_client(&clients, connfd);
+					if (id != -1)
+					{
+						sprintf(str, "server: client %d just left\n", id);
+						send_all(clients, str, connfd, &set_write);
+					}
+					FD_CLR(connfd, &fds);
+				}
+				else if (size > 0)
+				{
+					msg = NULL;
+					while (extract_message(&buff, &msg))
+					{
+						sprintf(str, "client %d: %s", id, msg);
+						send_all(clients, str, connfd, &set_write);
+						free(msg);
+					}
+				}
+				free(buff);
+				buff = NULL;
+			}
+			tmp = tmp->next;
+		}
+
+		//write messages
 	}
 	return (0);
 }
