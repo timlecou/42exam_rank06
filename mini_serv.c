@@ -13,9 +13,8 @@ typedef	struct			s_client
 	struct	s_client	*next;
 }						t_client;
 
-int			g_id = 0;
-int			sockfd = -1;
-int			max_fd = 0;
+int			g_id;
+int			sockfd;
 
 void	clear_client(t_client *list)
 {
@@ -28,6 +27,22 @@ void	clear_client(t_client *list)
 		free(list);
 		list = tmp;
 	}
+}
+
+int		get_max_fd(t_client *list)
+{
+	int		i;
+	
+	i = -1;
+	while (list != NULL)
+	{
+		if (list->fd > i)
+			i = list->fd;
+		list = list->next;
+	}
+	if (i == -1)
+		i = sockfd;
+	return (i);
 }
 
 int		add_client(t_client **list, int fd)
@@ -56,17 +71,6 @@ int		add_client(t_client **list, int fd)
 		tmp->next = new;
 	}
 	return (new->id);
-}
-
-int		ft_strlen(char *str)
-{
-	if (!str)
-		return (0);
-	int		i = 0;
-
-	while (str[i] != '\0')
-		i++;
-	return (i);
 }
 
 void	fatal_error(void)
@@ -145,21 +149,6 @@ void	send_all(t_client *list, char *str, int fd, fd_set *set)
 			send(list->fd, str, len, 0);
 		list = list->next;
 	}
-	write(1, str, len);
-}
-
-void	init_fdset(fd_set *set, t_client *clients)
-{
-	FD_ZERO(set);
-	max_fd = sockfd;
-	while (clients != NULL)
-	{
-		FD_SET(clients->fd, set);
-		if (max_fd < clients->fd)
-			max_fd = clients->fd;
-		clients = clients->next;
-	}
-	FD_SET(sockfd, set);
 }
 
 int		extract_message(char **buf, char **msg)
@@ -207,10 +196,9 @@ int		main(int argc, char **argv)
 		write(2, "Wrong number of arguments\n", 26);
 		exit(1);
 	}
-	if ((sockfd = socket(AF_INET, SOCK_STREAM, 0)) < 0)
-		fatal_error();
+	sockfd = socket(AF_INET, SOCK_STREAM, 0);
+
 	port = atoi(argv[1]);
-	bzero(&servaddr, sizeof(servaddr));
 
 	if (port <= 0)
 		fatal_error();
@@ -226,26 +214,21 @@ int		main(int argc, char **argv)
 
 	g_id = 0;
 	FD_ZERO(&fds);
-	max_fd = sockfd;
 	FD_SET(sockfd, &fds);
 
 	while (1)
 	{
 		set_read = fds;
 		set_write = fds;
-		if (select(max_fd + 1, &set_read, &set_write, NULL, NULL) == -1)
-			fatal_error();
-
+		select(get_max_fd(clients) + 1, &set_read, &set_write, NULL, NULL);
 		if (FD_ISSET(sockfd, &set_read))	//add new connection
 		{
 			connfd = accept(sockfd, NULL, NULL);
 			if (connfd >= 0)
 			{
 				id = add_client(&clients, connfd);
-				fcntl(connfd, F_SETFL, O_NONBLOCK);
+				fcntl(connfd, F_SETFL, O_NONBLOCK); //line to remove when get corrected
 				FD_SET(connfd, &fds);
-				if (max_fd < connfd)
-					max_fd = connfd;
 				sprintf(str, "server: client %d just arrived\n", id);
 				send_all(clients, str, connfd, &set_write);
 			}
@@ -260,16 +243,12 @@ int		main(int argc, char **argv)
 			if (FD_ISSET(connfd, &set_read))
 			{
 				i = 0;
-				//------------------------
 				while ((size = recv(connfd, buff, 4095, 0)) > 0)
 				{
 					buff[size] = '\0';
 					i += size;
 					message = str_join(message, buff);
 				}
-				if (size == -1 && i == 0)
-					fatal_error();
-				//-------------------------
 				if (i == 0)
 				{
 					id = remove_client(&clients, connfd);
